@@ -5311,8 +5311,11 @@ function seqTopicRows(cats, cur) {
     const acts = typeof flowButtons === "function" ? flowButtons(cat) : "";
     return '<div class="tt-row' + (isNext ? " next" : "") + '">'
       + '<span class="tt-dot" style="background:' + col + '"></span>'
-      + '<span class="tt-name" onclick="event.stopPropagation(); seqStart('
-      + JSON.stringify(cat) + ', '
+      // Single quotes, not JSON.stringify: the attribute is delimited with
+      // double quotes, so a stringified argument closes it early and the
+      // handler is truncated mid-call.
+      + '<span class="tt-name" onclick="event.stopPropagation(); seqStart(\''
+      + cat + '\', '
       + (ahead ? "true" : "false") + ')">'
       + esc(ALL_CATEGORY_LABELS[cat] || cat) + '</span>'
       // A percentage, or nothing. "not started" was a whole column of repeated
@@ -23092,12 +23095,9 @@ function renderTopicQuiz() {
       + '<div class="g-over-btns">'
       + (passed
          ? '<button class="g-btn" onclick="quizG=null; restart()">Back to the console</button>'
-         : '<button class="g-btn" onclick="openTopicReading(' + JSON.stringify(g.cat)
-           + ')">Read it again</button>'
-           + '<button class="g-btn ghost" onclick="startSingleCategoryPractice('
-           + JSON.stringify(g.cat) + ')">Practice it</button>')
-      + '<button class="g-btn ghost" onclick="startTopicQuiz(' + JSON.stringify(g.cat)
-      + ')">Retake</button></div></div>';
+         : '<button class="g-btn" onclick="openTopicReading(' + JSON.stringify(g.cat).replace(/"/g, "&quot;") + ')">Read it again</button>'
+           + '<button class="g-btn ghost" onclick="startSingleCategoryPractice(' + JSON.stringify(g.cat).replace(/"/g, "&quot;") + ')">Practice it</button>')
+      + '<button class="g-btn ghost" onclick="startTopicQuiz(' + JSON.stringify(g.cat).replace(/"/g, "&quot;") + ')">Retake</button></div></div>';
   }
 
   const rd = g.rounds[g.i];
@@ -23110,7 +23110,7 @@ function renderTopicQuiz() {
       else cls += " dim";
     }
     return '<div class="' + cls + '"'
-      + (g.picked === null ? ' onclick="quizPick(' + JSON.stringify(L) + ')"' : "")
+      + (g.picked === null ? ' onclick="quizPick(' + JSON.stringify(L).replace(/"/g, "&quot;") + ')"' : "")
       + '><span class="ts-l">' + L + '</span>' + esc(rd.choicesMap[L]) + '</div>';
   }).join("");
 
@@ -23316,7 +23316,7 @@ function renderWhereLive() {
       else cls += " dim";
     }
     return '<div class="' + cls + '"'
-      + (g.picked === null ? ' onclick="wdlPick(' + JSON.stringify(r) + ')"' : "")
+      + (g.picked === null ? ' onclick="wdlPick(' + JSON.stringify(r).replace(/"/g, "&quot;") + ')"' : "")
       + '>' + r + '</div>';
   }).join("");
   return '<div class="arcade-wrap">' + head
@@ -26461,8 +26461,11 @@ function arcadeCurrentGameKey() {
 function arcadeHowToLink() {
   const g = arcadeCurrentGameKey();
   if (!g || typeof HOWTO === "undefined" || !HOWTO[g]) return "";
+  // JSON.stringify emits real double quotes, which close the attribute early
+  // and truncate the handler -- the same fault that made the quiz unanswerable.
   return '<div class="arcade-howto" onclick="event.stopPropagation(); showHowTo('
-       + JSON.stringify(g) + ')" title="How this works">? How to play</div>';
+       + JSON.stringify(g).replace(/"/g, "&quot;") + ')" '
+       + 'title="How this works">? How to play</div>';
 }
 
 
