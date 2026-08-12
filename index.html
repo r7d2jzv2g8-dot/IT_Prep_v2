@@ -2479,6 +2479,22 @@ body.cn-all .seq-mod.collapsed{display:block}
 .nb-part{font-size:10px;color:var(--ink-muted);margin-left:10px;letter-spacing:.9px;
  text-transform:uppercase}
 .nb-covered{font-size:11.5px;color:var(--ink-muted);margin-top:9px}
+
+/* fixed step columns: each of Read, Play, Practice and Check occupies the same
+   width on every row, so a topic without a game leaves a gap in that column
+   rather than sliding the rest across */
+.tt-list .tt-acts{flex:0 0 auto;display:grid;grid-template-columns:repeat(4,84px);
+ gap:6px;margin-left:12px}
+.tt-act{font:inherit;font-size:10.5px;padding:4px 0;border-radius:6px;cursor:pointer;
+ border:1px solid var(--line);background:transparent;color:var(--ink-muted);
+ white-space:nowrap;text-align:center;width:100%}
+.tt-act.ghost{border-color:transparent;color:transparent;cursor:default;
+ pointer-events:none;visibility:hidden}
+@media (max-width:680px){
+  .tt-list .tt-acts{grid-template-columns:repeat(4,1fr);flex:1 1 100%;
+   margin:8px 0 0;gap:6px}
+  .tt-act{padding:7px 2px;font-size:11px}
+}
 </style>
 </head>
 <body>
@@ -4893,6 +4909,13 @@ function renderScreenBody() {
   if (state.screen === "registrygame") return renderRegistryGame();
   if (state.screen === "triage") return renderTriage();
   if (state.screen === "pickkey") return renderPickKey();
+  if (state.screen === "diskbench") return renderDiskBench();
+  if (state.screen === "whatruns") return renderWhatRuns();
+  if (state.screen === "nameattack") return renderNameAttack();
+  if (state.screen === "pickdefense") return renderPickDefense();
+  if (state.screen === "readflags") return renderReadFlags();
+  if (state.screen === "findswitch") return renderFindSwitch();
+  if (state.screen === "whereset") return renderWhereSet();
   if (state.screen === "reviewpkg") return renderReviewPackage();
   if (state.screen === "tools") return renderTools();
   if (state.screen === "lease") return renderLease();
@@ -24918,6 +24941,1319 @@ function renderPickKey() {
 }
 
 // ===================================================================
+// THE LAST TWO FUNDAMENTALS GAMES
+//
+//   The Disk Bench      -- allocation, media, partitioning, journaling
+//   What Will Run Here  -- what an interpreter needs, what it leaves
+//
+// Both rotate through every part of their topic rather than drilling
+// one, and the first rounds take one part each so no run can be all
+// allocation arithmetic.
+// ===================================================================
+
+// ---- THE DISK BENCH ------------------------------------------------
+const DISK_PARTS = ["allocation", "media", "partitioning", "journaling"];
+
+function dbAllocation() {
+  const cluster = gPick([4096, 4096, 2048, 8192]);
+  const files = shuffleArray([
+    [200, 1400, 5000], [900, 3000, 4100], [100, 100, 100],
+    [4096, 5000, 300], [2500, 2500, 2500], [50, 9000, 1200]
+  ])[0].map(function (n) { return Math.max(1, n); });
+  const names = ["report.txt", "notes.md", "log.txt"];
+  let used = 0, slack = 0;
+  const rows = files.map(function (sz, i) {
+    const c = Math.ceil(sz / cluster);
+    used += c;
+    slack += c * cluster - sz;
+    return { name: names[i], size: sz, clusters: c, slack: c * cluster - sz };
+  });
+  const work = rows.map(function (r) {
+    return "    " + r.name.padEnd(12) + String(r.size).padStart(6) + " B  \u2192  "
+         + r.clusters + " cluster" + (r.clusters === 1 ? " " : "s")
+         + "   slack " + r.slack;
+  }).join("\n");
+  return { part: "allocation", bits: null,
+    ask: "A volume uses " + cluster.toLocaleString() + "-byte clusters. Three files are "
+       + "written: " + rows.map(function (r) {
+           return r.name + " at " + r.size.toLocaleString() + " bytes"; }).join(", ")
+       + ". How many clusters are consumed, and how much of that is slack?",
+    answer: used + " clusters, " + slack.toLocaleString() + " bytes of slack",
+    wrong: [(used + 1) + " clusters, " + slack.toLocaleString() + " bytes of slack",
+            used + " clusters, " + Math.round(slack / 2).toLocaleString() + " bytes of slack",
+            Math.max(1, used - 1) + " clusters, "
+              + (slack + cluster).toLocaleString() + " bytes of slack"],
+    why: "Allocation is by whole cluster, so round each file up on its own.\n\n" + work
+       + "\n    " + "".padEnd(12) + "".padStart(6) + "     total "
+       + used + " clusters, " + slack.toLocaleString() + " slack\n\n"
+       + "A file one byte over a cluster boundary claims a whole second cluster, and "
+       + "the unused remainder can still hold fragments of whatever was there before." };
+}
+
+function dbMedia() {
+  const which = gPick(["trim", "wear", "seek", "recover"]);
+  if (which === "trim")
+    return { part: "media",
+      ask: "The same file is deleted from an HDD and from an SSD with TRIM enabled. An "
+         + "hour later recovery is attempted on both. What is the likely outcome?",
+      answer: "Recoverable from the HDD, gone from the SSD",
+      wrong: ["Recoverable from both, since deletion only removes the directory entry",
+              "Gone from both, since deletion zeroes the data",
+              "Gone from the HDD, recoverable from the SSD"],
+      why: "On a hard disk, deleting removes the directory entry and leaves the "
+         + "clusters holding the data until something overwrites them.\n\n"
+         + "    HDD  \u2192  entry gone, data still there\n"
+         + "    SSD  \u2192  TRIM told the controller the blocks are free; it erases "
+         + "them on its own schedule\n\n"
+         + "The window is not under the investigator's control, which is why "
+         + "acquisition order matters more with solid state media." };
+  if (which === "wear")
+    return { part: "media",
+      ask: "Why does an SSD controller move data around even when nothing has changed?",
+      answer: "Wear leveling \u2014 flash cells tolerate a limited number of erases",
+      wrong: ["Defragmentation, to keep files contiguous",
+              "To keep frequently read data near the start of the drive",
+              "To rebuild the journal after each write"],
+      why: "Each flash cell wears out after a bounded number of program-erase cycles, "
+         + "so the controller spreads writes across the whole device.\n\n"
+         + "It also means the logical block an operating system sees is not a fixed "
+         + "physical location, which is why securely erasing a single file on flash "
+         + "is harder than on a platter." };
+  if (which === "seek")
+    return { part: "media",
+      ask: "Why is random access dramatically slower on an HDD than on an SSD, while "
+         + "sequential throughput is much closer?",
+      answer: "The HDD must physically move the head and wait for the platter to rotate",
+      wrong: ["HDDs use a slower interface than SSDs",
+              "SSDs compress data, so less is transferred",
+              "HDDs must recalculate the checksum for each random read"],
+      why: "Seek time and rotational latency are mechanical and apply per request, so "
+         + "they dominate when requests are scattered.\n\n"
+         + "Sequential reads amortize one seek across a long run of data, which is why "
+         + "the gap narrows. Defragmenting helps an HDD for exactly this reason and "
+         + "does nothing useful on an SSD." };
+  return { part: "media",
+    ask: "A drive is to be disposed of and must not leak data. Which approach is "
+       + "appropriate for an SSD specifically?",
+    answer: "The drive's own secure erase or cryptographic erase command",
+    wrong: ["Overwriting every logical block several times",
+            "Deleting every file and emptying the recycle bin",
+            "Reformatting the volume with a full format"],
+    why: "Overwriting logical blocks does not reliably reach every physical cell, "
+       + "because wear leveling and over-provisioning keep spare blocks the operating "
+       + "system cannot address.\n\n"
+       + "The controller's own erase command clears them, and cryptographic erase "
+       + "discards the key instead, which makes the remaining ciphertext useless." };
+}
+
+function dbPartitioning() {
+  const which = gPick(["mbr", "gpt", "layout"]);
+  if (which === "mbr")
+    return { part: "partitioning",
+      ask: "A 4 TB disk cannot be used as a single volume, and only four partitions can "
+         + "be created. Which scheme is in use?",
+      answer: "MBR",
+      wrong: ["GPT", "LVM", "exFAT"],
+      why: "Two symptoms, one cause.\n\n"
+         + "    32-bit sector addressing  \u2192  volumes cap near 2 TiB\n"
+         + "    four primary entries      \u2192  four partitions\n\n"
+         + "Either alone is ambiguous; together they name MBR. GPT uses 64-bit "
+         + "addressing and allows far more partitions, with a backup table at the end "
+         + "of the disk." };
+  if (which === "gpt")
+    return { part: "partitioning",
+      ask: "What does GPT keep at the end of the disk, and why does it matter?",
+      answer: "A backup copy of the partition table, so damage to the front is recoverable",
+      wrong: ["A journal of recent partition changes",
+              "The bootloader, moved there to survive reformatting",
+              "Spare sectors used to replace failed ones"],
+      why: "MBR keeps one copy in the first sector, so corrupting 512 bytes can lose "
+         + "every partition. GPT writes a second table at the far end and checksums "
+         + "both.\n\n"
+         + "It also keeps a protective MBR at the front so older tools see one large "
+         + "unknown partition rather than empty space they might overwrite." };
+  return { part: "partitioning",
+    ask: "What is the difference between a partition table and a file system?",
+    answer: "The table divides the disk into volumes; the file system organizes what is "
+          + "inside one",
+    wrong: ["They are two names for the same structure",
+            "The table maps logical blocks to physical sectors",
+            "The file system divides the disk and the table indexes the files"],
+    why: "One disk can carry several partitions, each formatted differently \u2014 NTFS "
+       + "on one, ext4 on another.\n\n"
+       + "The distinction matters when reading a disk image: you find the partitions "
+       + "first, then interpret each one according to its own format." };
+}
+
+function dbJournaling() {
+  const which = gPick(["why", "what", "limit"]);
+  if (which === "why")
+    return { part: "journaling",
+      ask: "Power is lost mid-write. The machine mounts cleanly in seconds on restart, "
+         + "where an older system would have run a lengthy check. What accounts for that?",
+      answer: "A journal recorded the intended change, and mount replays or discards it",
+      wrong: ["A battery-backed cache in the drive completed the write",
+              "The volume mounts read-only until it has been verified",
+              "A second copy of every file is written on each change"],
+      why: "Recovery becomes replaying a short log rather than verifying every "
+         + "structure on the volume, which is why it takes seconds instead of "
+         + "hours.\n\n"
+         + "NTFS, ext4 and APFS all journal for this reason \u2014 worth knowing as a "
+         + "shared property rather than three separate facts." };
+  if (which === "what")
+    return { part: "journaling",
+      ask: "By default, what does a journaling file system usually protect?",
+      answer: "The metadata \u2014 the structures describing where files are",
+      wrong: ["Both metadata and file contents, always",
+              "File contents only; metadata is rebuilt on mount",
+              "Neither; the journal only records which files were open"],
+      why: "Metadata-only journaling keeps the file system consistent while costing "
+         + "far less than journaling every byte written.\n\n"
+         + "The consequence is worth holding: after a crash the structure is sound but "
+         + "a file's contents may be stale or partly written. Full data journaling is "
+         + "available and slower." };
+  return { part: "journaling",
+    ask: "A file system is described as consistent after a crash. What does that "
+       + "guarantee, and what does it not?",
+    answer: "The structures are sound; individual files may still have lost recent writes",
+    wrong: ["Every write completed before the crash is present",
+            "Nothing was lost, because the journal replays all pending data",
+            "The volume is byte-for-byte identical to before the crash"],
+    why: "Consistency is a statement about the file system, not about your data.\n\n"
+       + "An application that needs its own writes durable has to flush them "
+       + "explicitly \u2014 which is why databases call fsync and why 'the file system "
+       + "is journaled' is not an answer to 'did my transaction survive'." };
+}
+
+function dbBuild(part) {
+  const p = part || gPick(DISK_PARTS);
+  if (p === "allocation") return dbAllocation();
+  if (p === "media") return dbMedia();
+  if (p === "partitioning") return dbPartitioning();
+  return dbJournaling();
+}
+
+let dbG = null;
+
+function startDiskBench() {
+  gClearFresh("disk");
+  dbG = { round: 1, right: 0, misses: [], done: false, parts: {} };
+  dbNext(true);
+}
+
+function dbNext(first) {
+  if (!dbG) return;
+  if (!first) {
+    if (dbG.round >= 10) { dbG.done = true; render(); return; }
+    dbG.round++;
+  }
+  const want = dbG.round <= DISK_PARTS.length ? DISK_PARTS[dbG.round - 1] : null;
+  const it = gFresh("disk", function () { return dbBuild(want); },
+                    function (x) { return x.ask; });
+  dbG.item = it;
+  dbG.parts[it.part] = (dbG.parts[it.part] || 0) + 1;
+  const opts = shuffleArray(cntFourOptions(it));
+  dbG.opts = opts;
+  dbG.correct = opts.indexOf(String(it.answer));
+  dbG.picked = null;
+  state.screen = "diskbench";
+  render();
+}
+
+function dbPickOption(i) {
+  if (!dbG || dbG.picked !== null) return;
+  dbG.picked = i;
+  const ok = i === dbG.correct;
+  if (ok) { dbG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(dbG.misses, { cat: "fund_storage", ok: false,
+      q: String(dbG.item.ask).slice(0, 120), a: dbG.opts[i] });
+  }
+  arcadeCredit("diskbench", ok);
+  render();
+}
+
+function renderDiskBench() {
+  const g = dbG;
+  if (!g) { startDiskBench(); return ""; }
+  const head = gHead("dbG=null; goToArcade()", "The Disk Bench",
+                     [g.round + "/10", "round"], [g.right, "right"]);
+  if (g.done) {
+    const covered = Object.keys(g.parts).map(function (p) {
+      return p + " \u00d7" + g.parts[p]; }).join(", ");
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">The Disk Bench</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 10.</b> '
+      + (g.right >= 8 ? "Solid across the whole topic, not just the arithmetic."
+        : "Each part has its own rule: round every file up to a whole cluster, remember "
+          + "that TRIM erases on its own schedule, read two partitioning symptoms "
+          + "together, and treat consistency as being about the file system rather "
+          + "than your data.")
+      + '<div class="nb-covered">covered this run: ' + esc(covered) + '</div></div>'
+      + renderDebrief(g.misses, { total: 10, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startDiskBench()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="dbG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  const letters = "ABCD";
+  const opts = g.opts.map(function (o, i) {
+    let cls = "ts-opt";
+    if (g.picked !== null) {
+      if (i === g.correct) cls += " right";
+      else if (i === g.picked) cls += " wrong";
+      else cls += " dim";
+    }
+    return '<div class="' + cls + '"'
+      + (g.picked === null ? ' onclick="dbPickOption(' + i + ')"' : "")
+      + '><span class="ts-l">' + letters[i] + '</span>' + esc(o) + '</div>';
+  }).join("");
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">The Disk Bench <span class="nb-part">'
+    + esc(g.item.part) + '</span></div>'
+    + '<div class="bpf-goal">' + esc(g.item.ask) + '</div>'
+    + '<div class="ts-opts">' + opts + '</div>'
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        String(g.item.answer), g.item.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="dbNext()">'
+         + (g.round >= 10 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ---- WHAT WILL RUN HERE --------------------------------------------
+const RUN_PARTS = ["possible", "runs", "left behind"];
+
+function wrPossible() {
+  const hasPy = Math.random() < 0.7, hasPerl = Math.random() < 0.5;
+  const hasCc = Math.random() < 0.25;
+  const rows = [
+    ["/usr/bin/python3", hasPy ? "present" : "not installed"],
+    ["/usr/bin/perl", hasPerl ? "present" : "not installed"],
+    ["/usr/bin/gcc", hasCc ? "present" : "not installed"],
+  ];
+  const can = [];
+  if (hasPy) can.push("Python");
+  if (hasPerl) can.push("Perl");
+  const list = can.length ? can.join(" and ") : "neither Python nor Perl";
+  const answer = can.length
+    ? "They can run " + list + (hasCc ? ", and compile on this host" : ", but cannot compile here")
+    : "They can run neither" + (hasCc ? ", though they can compile here" : ", and cannot compile here");
+  return { part: "possible",
+    ask: "An intruder has a shell on a host with:\n\n"
+       + rows.map(function (r) { return "    " + r[0].padEnd(20) + r[1]; }).join("\n")
+       + "\n\nWhat does this allow?",
+    answer: answer,
+    wrong: ["They can run and compile anything, since a shell is present",
+            "They can run nothing without administrator rights",
+            "An interpreter can execute a compiled binary, so it makes no difference"],
+    why: "An interpreted language needs its interpreter present at run time; a "
+       + "compiled one needs a toolchain only to build, not to run.\n\n"
+       + rows.map(function (r) { return "    " + r[0].padEnd(20) + r[1]; }).join("\n")
+       + "\n\nThis is why removing unused interpreters narrows what an intruder can run "
+       + "without bringing their own binary, which is a noisier act." };
+}
+
+function wrRuns() {
+  const files = shuffleArray([
+    ["collect", "#!/usr/bin/env python3", "755", true],
+    ["gather", "#!/bin/bash", "644", false],
+    ["report.py", "no shebang", "755", false],
+    ["run.sh", "#!/bin/sh", "755", true],
+    ["setup", "#!/usr/bin/perl", "700", true],
+    ["notes", "plain text", "755", false],
+  ]).slice(0, 4);
+  const runnable = files.filter(function (f) { return f[3]; });
+  const answer = runnable.length
+    ? runnable.map(function (f) { return f[0]; }).join(" and ")
+    : "none of them";
+  const others = files.filter(function (f) { return !f[3]; });
+  return { part: "runs",
+    ask: "Which of these execute when run directly as ./name?\n\n"
+       + files.map(function (f) {
+           return "    " + f[0].padEnd(12) + f[1].padEnd(24) + "mode " + f[2];
+         }).join("\n"),
+    answer: answer,
+    wrong: [files.map(function (f) { return f[0]; }).join(" and "),
+            files[0][0] + " only",
+            others.length ? others.map(function (f) { return f[0]; }).join(" and ")
+                          : "all but the first"],
+    why: "Two conditions, and both are required: the execute bit, and something that "
+       + "tells the kernel which interpreter to use.\n\n"
+       + files.map(function (f) {
+           return "    " + f[0].padEnd(12)
+                + (f[3] ? "runs" : (f[2] === "644" ? "no execute bit"
+                                    : "nothing tells the kernel how to run it"));
+         }).join("\n")
+       + "\n\nA mode of 700 still runs for its owner. `#!/usr/bin/env python3` finds "
+       + "whichever python3 is first on PATH, which is more portable than a hard-coded "
+       + "path and is also what PATH hijacking exploits." };
+}
+
+function wrLeft() {
+  const which = gPick(["fileless", "pyc", "source"]);
+  if (which === "fileless")
+    return { part: "left behind",
+      ask: "A process list shows:\n\n"
+         + "    root  8814  python3 -c import base64,socket;exec(base64.b64decode(...))\n\n"
+         + "What can be recovered from disk afterward?",
+      answer: "Nothing \u2014 the code exists only in the process; the command line is "
+            + "the evidence",
+      wrong: ["The script, from /tmp, once the process exits",
+              "A .pyc cache file, which Python writes for anything it runs",
+              "Everything, since Python logs what it executes"],
+      why: "Nothing is written to disk, so file-based scanning has nothing to "
+         + "examine.\n\n"
+         + "The tempting wrong answer is the .pyc cache: Python does write bytecode, "
+         + "but only for imported modules, never for code passed with -c. Believing "
+         + "otherwise sends an investigator looking for a file that was never "
+         + "created.\n\n"
+         + "The evidence lives in process telemetry and command-line logging, which is "
+         + "precisely why those are worth collecting in advance." };
+  if (which === "pyc")
+    return { part: "left behind",
+      ask: "A .pyc file is found beside a .py script. What is it, and what does its "
+         + "presence tell you?",
+      answer: "Cached bytecode, written automatically when the module was imported",
+      wrong: ["An encrypted copy of the script, produced to hide the source",
+              "A standalone executable that runs without Python installed",
+              "A backup written before the script was last edited"],
+      why: "Python caches bytecode so it does not have to re-parse the source each "
+         + "time. It is not a protection mechanism \u2014 bytecode decompiles to "
+         + "something close to the original.\n\n"
+         + "Its presence is a useful fact for an investigator: it means the module was "
+         + "imported by something, and its timestamp says roughly when." };
+  return { part: "left behind",
+    ask: "Both a compiled binary and a Python script are found on a compromised host. "
+       + "Which is faster to understand, and why?",
+    answer: "The script, because its logic is present as readable source",
+    wrong: ["The binary, because compiled code has more structure",
+            "Both take similar effort with current tooling",
+            "The binary, because it carries a digital signature"],
+    why: "Compiled code has to be disassembled or run to be understood; source can "
+       + "simply be read.\n\n"
+       + "That asymmetry cuts both ways: it is why script-based tooling is easier to "
+       + "analyze, and why attackers increasingly compile, pack or obfuscate what they "
+       + "leave behind \u2014 or avoid leaving a file at all." };
+}
+
+function wrBuild(part) {
+  const p = part || gPick(RUN_PARTS);
+  if (p === "possible") return wrPossible();
+  if (p === "runs") return wrRuns();
+  return wrLeft();
+}
+
+let wrG = null;
+
+function startWhatRuns() {
+  gClearFresh("whatruns");
+  wrG = { round: 1, right: 0, misses: [], done: false, parts: {} };
+  wrNext(true);
+}
+
+function wrNext(first) {
+  if (!wrG) return;
+  if (!first) {
+    if (wrG.round >= 9) { wrG.done = true; render(); return; }
+    wrG.round++;
+  }
+  const want = wrG.round <= RUN_PARTS.length ? RUN_PARTS[wrG.round - 1] : null;
+  const it = gFresh("whatruns", function () { return wrBuild(want); },
+                    function (x) { return x.ask; });
+  wrG.item = it;
+  wrG.parts[it.part] = (wrG.parts[it.part] || 0) + 1;
+  const opts = shuffleArray(cntFourOptions(it));
+  wrG.opts = opts;
+  wrG.correct = opts.indexOf(String(it.answer));
+  wrG.picked = null;
+  state.screen = "whatruns";
+  render();
+}
+
+function wrPickOption(i) {
+  if (!wrG || wrG.picked !== null) return;
+  wrG.picked = i;
+  const ok = i === wrG.correct;
+  if (ok) { wrG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(wrG.misses, { cat: "prog_interpreted", ok: false,
+      q: String(wrG.item.ask).slice(0, 120), a: wrG.opts[i] });
+  }
+  arcadeCredit("whatruns", ok);
+  render();
+}
+
+function renderWhatRuns() {
+  const g = wrG;
+  if (!g) { startWhatRuns(); return ""; }
+  const head = gHead("wrG=null; goToArcade()", "What Will Run Here",
+                     [g.round + "/9", "round"], [g.right, "right"]);
+  if (g.done) {
+    const covered = Object.keys(g.parts).map(function (p) {
+      return p + " \u00d7" + g.parts[p]; }).join(", ");
+    return '<div class="arcade-wrap">' + head
+      + '<div class="bpf-mode">What Will Run Here</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 9.</b> '
+      + (g.right >= 7 ? "You are reading the host rather than the language."
+        : "Three rules cover it: an interpreter must be present to run its language, a "
+          + "file needs both the execute bit and a shebang, and code passed with -c "
+          + "leaves nothing on disk.")
+      + '<div class="nb-covered">covered this run: ' + esc(covered) + '</div></div>'
+      + renderDebrief(g.misses, { total: 9, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startWhatRuns()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="wrG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  const letters = "ABCD";
+  const opts = g.opts.map(function (o, i) {
+    let cls = "ts-opt";
+    if (g.picked !== null) {
+      if (i === g.correct) cls += " right";
+      else if (i === g.picked) cls += " wrong";
+      else cls += " dim";
+    }
+    return '<div class="' + cls + '"'
+      + (g.picked === null ? ' onclick="wrPickOption(' + i + ')"' : "")
+      + '><span class="ts-l">' + letters[i] + '</span>' + esc(o) + '</div>';
+  }).join("");
+  const ask = String(g.item.ask);
+  const askHtml = ask.indexOf("\n") >= 0 && typeof renderLabPrompt === "function"
+    ? renderLabPrompt(ask) : '<div class="bpf-goal">' + esc(ask) + '</div>';
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">What Will Run Here <span class="nb-part">'
+    + esc(g.item.part) + '</span></div>'
+    + askHtml
+    + '<div class="ts-opts">' + opts + '</div>'
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        String(g.item.answer), g.item.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="wrNext()">'
+         + (g.round >= 9 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ===================================================================
+// THE REMAINING FIVE GAMES
+//
+//   Name the Attack   -- recognize an attack from evidence, not a name
+//   Pick the Defense  -- match a mechanism to what it prevents
+//   Read the Flags    -- classify ports from a capture
+//   Find the Switch   -- build a command from a manual page on screen
+//   Where Is It Set   -- given a symptom, find where to look
+// ===================================================================
+
+// ---- NAME THE ATTACK -----------------------------------------------
+const ATTACK_CASES = [
+  { name: "ARP spoofing",
+    rows: [["arp -a on two hosts", "the gateway IP maps to two different MACs"],
+           ["switch port counters", "one port sending far more than it receives"],
+           ["a capture", "unsolicited ARP replies, twice a second"],
+           ["traceroute", "one extra hop that was not there yesterday"]],
+    wrong: ["A rogue DHCP server handing out its own gateway",
+            "MAC flooding, forcing the switch to behave as a hub",
+            "A routing loop from a misconfigured static route"],
+    why: "One IP with two MACs, and unsolicited replies keeping it that way, is the "
+       + "signature. The extra hop is the attacker forwarding traffic on so nothing "
+       + "breaks.\n\nDynamic ARP inspection stops it at the switch, and static entries "
+       + "for critical gateways stop it on the host." },
+  { name: "A rogue DHCP server",
+    rows: [["new clients", "get a gateway that is not the real router"],
+           ["existing clients", "keep working until their lease renews"],
+           ["a capture", "two DHCP OFFER packets for each DISCOVER"],
+           ["the real server", "shows fewer leases issued than usual"]],
+    wrong: ["ARP spoofing on the gateway address",
+            "A failing switch dropping frames intermittently",
+            "DNS cache poisoning on the local resolver"],
+    why: "Two offers per discover is conclusive: only one server should be answering. "
+       + "The staggered impact is the tell \u2014 clients break as their leases renew "
+       + "rather than all at once.\n\nDHCP snooping permits offers only from trusted "
+       + "ports, which is the fix." },
+  { name: "MAC flooding",
+    rows: [["the switch", "CAM table at capacity, oldest entries aging out"],
+           ["a host on the same VLAN", "receiving frames addressed to other machines"],
+           ["a capture", "thousands of frames with random source MACs"],
+           ["throughput", "degraded across the whole VLAN"]],
+    wrong: ["ARP spoofing against several hosts at once",
+            "A broadcast storm from a loop in the topology",
+            "A misconfigured port mirror duplicating traffic"],
+    why: "A full CAM table forces the switch to flood unknown destinations out every "
+       + "port, which is why an unrelated host sees other machines' traffic.\n\nPort "
+       + "security limits how many addresses a port may learn, which is the direct "
+       + "countermeasure." },
+  { name: "A SYN flood",
+    rows: [["netstat on the server", "thousands of sockets in SYN_RECEIVED"],
+           ["the same output", "very few in ESTABLISHED"],
+           ["a capture", "SYNs from many source addresses, no final ACKs"],
+           ["the service", "refusing new connections while the host stays reachable"]],
+    wrong: ["A slow-loris attack holding connections open",
+            "A port scan sweeping the address range",
+            "A failing load balancer sending duplicate SYNs"],
+    why: "Half-open connections accumulating with no matching ACK is the definition. "
+       + "The host staying reachable while one service refuses connections says the "
+       + "backlog is exhausted rather than the link.\n\nSYN cookies let the server "
+       + "answer without allocating state until the handshake completes." },
+  { name: "VLAN hopping",
+    rows: [["a host in VLAN 10", "receiving frames from VLAN 20"],
+           ["a capture", "frames carrying two 802.1Q tags"],
+           ["the access port", "negotiated a trunk automatically"],
+           ["the trunk", "native VLAN matches the attacker's access VLAN"]],
+    wrong: ["A switch with its VLAN database corrupted",
+            "ARP spoofing across a routed boundary",
+            "A router leaking between subinterfaces"],
+    why: "Double tagging: the first switch strips the outer tag and forwards the frame "
+       + "with the inner one still on it, landing it in another VLAN.\n\nSetting the "
+       + "native VLAN to something unused and disabling automatic trunk negotiation "
+       + "closes it." },
+  { name: "LLMNR and NBT-NS poisoning",
+    rows: [["a workstation", "asked for a hostname that does not exist"],
+           ["a capture", "an unexpected host answered the broadcast immediately"],
+           ["that host", "then received an authentication attempt"],
+           ["the DNS server", "has no record of the query at all"]],
+    wrong: ["DNS cache poisoning on the local resolver",
+            "A rogue DHCP server supplying its own DNS",
+            "ARP spoofing between the workstation and the server"],
+    why: "DNS not seeing the query is the key: this is the fallback protocol, which is "
+       + "an unauthenticated broadcast. Whoever answers first is believed, and the "
+       + "credential attempt follows.\n\nDisabling LLMNR and NBT-NS removes the "
+       + "fallback entirely." },
+];
+
+let atkG = null;
+
+function startNameAttack() {
+  gResetBag("atk");
+  atkG = { round: 1, right: 0, misses: [], done: false, picked: null };
+  atkNext(true);
+}
+
+function atkNext(first) {
+  if (!atkG) return;
+  if (!first) {
+    if (atkG.round >= 6) { atkG.done = true; render(); return; }
+    atkG.round++;
+  }
+  const c = gDeal("atk", ATTACK_CASES);
+  atkG.case = c;
+  const opts = shuffleArray([c.name].concat(c.wrong));
+  atkG.opts = opts;
+  atkG.correct = opts.indexOf(c.name);
+  atkG.picked = null;
+  state.screen = "nameattack";
+  render();
+}
+
+function atkPick(i) {
+  if (!atkG || atkG.picked !== null) return;
+  atkG.picked = i;
+  const ok = i === atkG.correct;
+  if (ok) { atkG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(atkG.misses, { cat: "sec_vulnerabilities", ok: false,
+      q: "evidence: " + atkG.case.rows[0][1], a: atkG.opts[i] });
+  }
+  arcadeCredit("nameattack", ok);
+  render();
+}
+
+function svgEvidence(rows, title) {
+  const h = 22 + rows.length * 30;
+  let o = '<svg viewBox="0 0 810 ' + h + '" class="va-svg" role="img" width="810" '
+        + 'height="' + h + '" preserveAspectRatio="xMidYMid meet">';
+  o += '<text x="0" y="12" font-size="10" fill="currentColor" opacity=".55" '
+     + 'letter-spacing="1.1">' + esc(title) + '</text>';
+  rows.forEach(function (r, i) {
+    const y = 20 + i * 30;
+    o += '<rect x="5" y="' + y + '" width="800" height="26" rx="5" fill="none" '
+       + 'stroke="currentColor" stroke-opacity=".26"/>'
+       + '<text x="20" y="' + (y + 18) + '" font-size="11" fill="currentColor" '
+       + 'opacity=".6" font-family="ui-monospace,monospace">' + esc(r[0]) + '</text>'
+       + '<text x="280" y="' + (y + 18) + '" font-size="11.5" fill="currentColor">'
+       + esc(r[1]) + '</text>';
+  });
+  return o + "</svg>";
+}
+
+function renderNameAttack() {
+  const g = atkG;
+  if (!g) { startNameAttack(); return ""; }
+  const head = gHead("atkG=null; goToArcade()", "Name the Attack",
+                     [g.round + "/6", "round"], [g.right, "right"]);
+  if (g.done) {
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">Name the Attack</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 6.</b> '
+      + (g.right >= 5 ? "You are reading the combination rather than the loudest line."
+        : "Ask what all four observations have in common. Any one of them usually has "
+          + "an innocent explanation; only the set narrows it to one attack.")
+      + '</div>' + renderDebrief(g.misses, { total: 6, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startNameAttack()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="atkG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  const letters = "ABCD";
+  const opts = g.opts.map(function (o, i) {
+    let cls = "ts-opt";
+    if (g.picked !== null) {
+      if (i === g.correct) cls += " right";
+      else if (i === g.picked) cls += " wrong";
+      else cls += " dim";
+    }
+    return '<div class="' + cls + '"'
+      + (g.picked === null ? ' onclick="atkPick(' + i + ')"' : "")
+      + '><span class="ts-l">' + letters[i] + '</span>' + esc(o) + '</div>';
+  }).join("");
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">Name the Attack</div>'
+    + '<div class="bpf-goal">Four observations from one network. What is happening?</div>'
+    + svgEvidence(g.case.rows, "FOUR OBSERVATIONS FROM ONE NETWORK")
+    + '<div class="ts-opts">' + opts + '</div>'
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct, g.case.name, g.case.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="atkNext()">'
+         + (g.round >= 6 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ---- PICK THE DEFENSE ----------------------------------------------
+const DEFENSES = [
+  ["DEP", "data pages are not executable"],
+  ["ASLR", "module addresses are unpredictable"],
+  ["Credential Guard", "secrets are isolated from LSASS"],
+  ["AMSI", "script content is handed to the scanner at run time"],
+  ["Kernel-mode code signing", "unsigned drivers will not load"],
+  ["UAC", "administrative actions require consent"],
+  ["AppLocker / WDAC", "only binaries on an allowed list may run"],
+  ["SELinux / AppArmor", "a policy constrains a process regardless of its user"],
+  ["sudo", "elevation is per command and logged"],
+  ["Stack canaries", "a known value sits in front of the saved return address"],
+];
+
+const DEF_TASKS = [
+  { ask: "An exploit writes shellcode into a buffer and jumps to it. Which mechanism "
+       + "stops that specific step?", key: "DEP",
+    why: "DEP marks writable pages non-executable, so the jump faults.\n\nASLR is the "
+       + "tempting answer: it makes the address hard to find, but it does not stop "
+       + "execution once you have one. The two solve different halves of the same "
+       + "problem, which is why both exist." },
+  { ask: "An exploit hard-codes the address of a library function. Which mechanism "
+       + "breaks it?", key: "ASLR",
+    why: "Modules load at different addresses each boot, so a hard-coded address is "
+       + "wrong. It is why exploits leak an address first, and why a single "
+       + "non-relocatable module undermines the whole scheme." },
+  { ask: "An attacker with administrator rights tries to read password hashes out of "
+       + "memory. Which mechanism prevents it?", key: "Credential Guard",
+    why: "Secrets are moved into a virtualization-based container that even an "
+       + "administrator on the host cannot read.\n\nThis is why credential theft "
+       + "shifted toward other techniques on machines where it is enabled." },
+  { ask: "A heavily obfuscated PowerShell script is executed. What gets the scanner a "
+       + "look at what it actually does?", key: "AMSI",
+    why: "The content is handed to the scanner after deobfuscation, at the moment it "
+       + "is about to run \u2014 so obfuscating the file on disk no longer helps.\n\n"
+       + "It is also why attackers target AMSI itself before running anything." },
+  { ask: "An attacker wants their own driver loaded into the kernel on 64-bit Windows. "
+       + "What stops them, and what do they do instead?", key: "Kernel-mode code signing",
+    why: "Unsigned drivers will not load, so they bring a legitimately signed but "
+       + "vulnerable one instead \u2014 the 'bring your own vulnerable driver' "
+       + "technique.\n\nThat is why blocklists of known-vulnerable signed drivers "
+       + "exist alongside the signing requirement." },
+  { ask: "A compromised web server process tries to read /etc/shadow. It runs as a "
+       + "dedicated user with no special rights. What would stop it even if it were "
+       + "running as root?", key: "SELinux / AppArmor",
+    why: "Mandatory access control applies a policy the process cannot escape by "
+       + "virtue of its user, including root.\n\nOrdinary permissions are "
+       + "discretionary: the owner decides. That distinction is the whole point of "
+       + "the mechanism." },
+  { ask: "A user downloads and runs an unknown executable from a temp directory. Which "
+       + "mechanism prevents it from running at all?", key: "AppLocker / WDAC",
+    why: "Allow-listing permits only binaries on a known list, so an unknown one never "
+       + "starts.\n\nUnlike antivirus it does not need to recognize the file as bad, "
+       + "which is why it catches things with no signature yet." },
+  { ask: "A stack buffer is overflowed and the saved return address is overwritten. "
+       + "What detects it before the function returns?", key: "Stack canaries",
+    why: "A known value sits between the buffer and the return address. Overwriting "
+       + "the address means overwriting the canary first, and it is checked on "
+       + "return.\n\nIt detects rather than prevents, which is why it is one layer "
+       + "among several." },
+];
+
+let defG = null;
+
+function startPickDefense() {
+  gResetBag("def");
+  defG = { round: 1, right: 0, misses: [], done: false, picked: null };
+  defNext(true);
+}
+
+function defNext(first) {
+  if (!defG) return;
+  if (!first) {
+    if (defG.round >= 6) { defG.done = true; render(); return; }
+    defG.round++;
+  }
+  const t = gDeal("def", DEF_TASKS);
+  defG.task = t;
+  const right = DEFENSES.filter(function (d) { return d[0] === t.key; })[0];
+  const others = shuffleArray(DEFENSES.filter(function (d) { return d[0] !== t.key; }))
+    .slice(0, 3);
+  defG.opts = shuffleArray([right].concat(others));
+  defG.correct = defG.opts.indexOf(right);
+  defG.picked = null;
+  state.screen = "pickdefense";
+  render();
+}
+
+function defPick(i) {
+  if (!defG || defG.picked !== null) return;
+  defG.picked = i;
+  const ok = i === defG.correct;
+  if (ok) { defG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(defG.misses, { cat: "sec_builtin_security", ok: false,
+      q: defG.task.ask, a: defG.opts[i][0] });
+  }
+  arcadeCredit("pickdefense", ok);
+  render();
+}
+
+function svgDefenses(g) {
+  let o = '<svg viewBox="0 0 810 128" class="va-svg" role="img" width="810" height="128" '
+        + 'preserveAspectRatio="xMidYMid meet">';
+  o += '<text x="0" y="12" font-size="10" fill="currentColor" opacity=".55" '
+     + 'letter-spacing="1.1">FOUR MECHANISMS \u2014 EACH STATED BY WHAT IT DOES</text>';
+  g.opts.forEach(function (d, i) {
+    const x = 5 + (i % 2) * 405, y = 20 + Math.floor(i / 2) * 50;
+    const answered = g.picked !== null;
+    let col = "currentColor", op = ".26", fill = "0";
+    if (answered) {
+      if (i === g.correct) { col = "var(--correct,#4bb98a)"; op = ".85"; fill = ".12"; }
+      else if (i === g.picked) { col = "var(--incorrect)"; op = ".85"; fill = ".10"; }
+      else op = ".14";
+    }
+    o += '<rect x="' + x + '" y="' + y + '" width="392" height="42" rx="7" fill="' + col
+       + '" fill-opacity="' + fill + '" stroke="' + col + '" stroke-opacity="' + op + '"'
+       + (answered ? "" : ' style="cursor:pointer" onclick="defPick(' + i + ')"') + '/>'
+       + '<text x="' + (x + 16) + '" y="' + (y + 19) + '" font-size="12" '
+       + 'fill="currentColor" opacity="' + (answered && i !== g.correct && i !== g.picked
+         ? ".4" : "1") + '"'
+       + (answered ? "" : ' style="cursor:pointer" onclick="defPick(' + i + ')"')
+       + '>' + esc(d[0]) + '</text>'
+       + '<text x="' + (x + 16) + '" y="' + (y + 34) + '" font-size="10.5" '
+       + 'fill="currentColor" opacity=".5">' + esc(d[1]) + '</text>';
+  });
+  return o + "</svg>";
+}
+
+function renderPickDefense() {
+  const g = defG;
+  if (!g) { startPickDefense(); return ""; }
+  const head = gHead("defG=null; goToArcade()", "Pick the Defense",
+                     [g.round + "/6", "round"], [g.right, "right"]);
+  if (g.done) {
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">Pick the Defense</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 6.</b> '
+      + (g.right >= 5 ? "You are matching mechanism to consequence, not name to name."
+        : "Read what each mechanism does, then ask which step of the attack that makes "
+          + "impossible. Several will look plausible; only one blocks the step named.")
+      + '</div>' + renderDebrief(g.misses, { total: 6, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startPickDefense()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="defG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">Pick the Defense</div>'
+    + '<div class="bpf-goal">' + esc(g.task.ask) + '</div>'
+    + svgDefenses(g)
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        g.opts[g.correct][0], g.task.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="defNext()">'
+         + (g.round >= 6 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ---- READ THE FLAGS ------------------------------------------------
+const FLAG_SERVICES = [[22, "ssh"], [23, "telnet"], [80, "http"], [443, "https"],
+                       [445, "smb"], [3389, "rdp"], [25, "smtp"], [3306, "mysql"]];
+
+function rflagBuild() {
+  const picked = shuffleArray(FLAG_SERVICES.slice()).slice(0, 3);
+  const states = shuffleArray(["open", "closed", "filtered"]);
+  const rows = picked.map(function (p, i) {
+    const st = states[i];
+    return { port: p[0], svc: p[1], state: st,
+             reply: st === "open" ? "Flags [S.]"
+                  : st === "closed" ? "Flags [R.]" : "(no reply)" };
+  });
+  const answer = rows.map(function (r) { return r.port + " " + r.state; }).join(", ");
+  const shuffleStates = function (a, b, c) {
+    return rows[0].port + " " + a + ", " + rows[1].port + " " + b + ", "
+         + rows[2].port + " " + c;
+  };
+  const s = rows.map(function (r) { return r.state; });
+  return { rows: rows, answer: answer,
+    wrong: [shuffleStates(s[1], s[0], s[2]),
+            shuffleStates(s[0], s[2], s[1]),
+            shuffleStates(s[2], s[1], s[0])],
+    why: "A SYN gets three possible answers, and all three are here.\n\n"
+       + rows.map(function (r) {
+           return "    " + String(r.port).padEnd(6)
+                + r.reply.padEnd(13)
+                + (r.state === "open" ? "SYN-ACK  \u2192 something is listening"
+                   : r.state === "closed" ? "RST      \u2192 nothing listening, host is up"
+                   : "silence  \u2192 a firewall dropped it");
+         }).join("\n")
+       + "\n\nClosed and filtered are only distinguishable by what does not arrive, "
+       + "which is why a scanner has to wait out a timeout for every filtered port and "
+       + "why filtered scans are slow." };
+}
+
+let rfG = null;
+
+function startReadFlags() {
+  gClearFresh("flags");
+  rfG = { round: 1, right: 0, misses: [], done: false };
+  rfNext(true);
+}
+
+function rfNext(first) {
+  if (!rfG) return;
+  if (!first) {
+    if (rfG.round >= 8) { rfG.done = true; render(); return; }
+    rfG.round++;
+  }
+  const it = gFresh("flags", rflagBuild, function (x) { return x.answer; });
+  rfG.item = it;
+  const opts = shuffleArray(cntFourOptions(it));
+  rfG.opts = opts;
+  rfG.correct = opts.indexOf(String(it.answer));
+  rfG.picked = null;
+  state.screen = "readflags";
+  render();
+}
+
+function rfPick(i) {
+  if (!rfG || rfG.picked !== null) return;
+  rfG.picked = i;
+  const ok = i === rfG.correct;
+  if (ok) { rfG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(rfG.misses, { cat: "netdes_ports_flags", ok: false,
+      q: "classify three probes", a: rfG.opts[i] });
+  }
+  arcadeCredit("readflags", ok);
+  render();
+}
+
+function svgFlags(g) {
+  const rows = g.item.rows;
+  let o = '<svg viewBox="0 0 810 130" class="va-svg" role="img" width="810" height="130" '
+        + 'preserveAspectRatio="xMidYMid meet">';
+  o += '<text x="0" y="12" font-size="10" fill="currentColor" opacity=".55" '
+     + 'letter-spacing="1.1">THREE PROBES, THREE REPLIES</text>';
+  rows.forEach(function (r, i) {
+    const y = 26 + i * 30;
+    o += '<text x="5" y="' + (y + 14) + '" font-size="11.5" fill="currentColor" '
+       + 'font-family="ui-monospace,monospace">10.0.0.5.5102' + i + ' &gt; 10.0.0.9.'
+       + r.port + '</text>'
+       + '<text x="330" y="' + (y + 14) + '" font-size="11.5" fill="currentColor" '
+       + 'opacity=".55" font-family="ui-monospace,monospace">Flags [S]</text>'
+       + '<text x="450" y="' + (y + 14) + '" font-size="11.5" fill="currentColor" '
+       + 'font-family="ui-monospace,monospace">\u2192  ' + esc(r.reply) + '</text>';
+  });
+  o += '<text x="5" y="124" font-size="10.5" fill="currentColor" opacity=".5">'
+     + 'printed as tcpdump prints it \u2014 nothing highlighted or explained</text>';
+  return o + "</svg>";
+}
+
+function renderReadFlags() {
+  const g = rfG;
+  if (!g) { startReadFlags(); return ""; }
+  const head = gHead("rfG=null; goToArcade()", "Read the Flags",
+                     [g.round + "/8", "round"], [g.right, "right"]);
+  if (g.done) {
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">Read the Flags</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 8.</b> '
+      + (g.right >= 7 ? "The three replies are settled."
+        : "SYN-ACK means listening, RST means nothing is listening but the host is up, "
+          + "and silence means something dropped it.")
+      + '</div>' + renderDebrief(g.misses, { total: 8, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startReadFlags()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="rfG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  const letters = "ABCD";
+  const opts = g.opts.map(function (o, i) {
+    let cls = "ts-opt";
+    if (g.picked !== null) {
+      if (i === g.correct) cls += " right";
+      else if (i === g.picked) cls += " wrong";
+      else cls += " dim";
+    }
+    return '<div class="' + cls + '"'
+      + (g.picked === null ? ' onclick="rfPick(' + i + ')"' : "")
+      + '><span class="ts-l">' + letters[i] + '</span>' + esc(o) + '</div>';
+  }).join("");
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">Read the Flags</div>'
+    + '<div class="bpf-goal">A scanner probes three ports. Classify each.</div>'
+    + svgFlags(g)
+    + '<div class="ts-opts">' + opts + '</div>'
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        String(g.item.answer), g.item.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="rfNext()">'
+         + (g.round >= 8 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ===================================================================
+// FIND THE SWITCH  and  WHERE IS IT SET
+//
+// The last two. Find the Switch keeps the manual page on screen on
+// purpose: looking it up is the skill being drilled, not recalled.
+// ===================================================================
+
+// ---- FIND THE SWITCH -----------------------------------------------
+const SYNTAX_TASKS = [
+  { goal: "Find every setuid-root file on the system.",
+    page: ["SYNOPSIS",
+           "     find [-H] [-L] [-P] [path...] [expression]",
+           "",
+           "     -type c      File is of type c:  f  regular file",
+           "                                      d  directory",
+           "     -perm mode   File's permission bits are exactly mode.",
+           "     -perm -mode  All of the permission bits mode are set.",
+           "     -user name   File is owned by name."],
+    answer: "find / -perm -4000 -type f",
+    wrong: ["find / -perm 4000 -type d", "find / -type f -perm 777",
+            "find / -setuid -type f"],
+    why: "The leading hyphen on -perm -4000 means 'at least these bits', which is what "
+       + "you want \u2014 a setuid file also has read and execute bits set, so an exact "
+       + "match on 4000 finds nothing.\n\nThat one character is the whole difference "
+       + "between the answer and the second option, and the page states it plainly. "
+       + "There is no -setuid test at all." },
+  { goal: "Copy a directory tree, preserving permissions, ownership and timestamps.",
+    page: ["SYNOPSIS",
+           "     cp [-R [-H | -L | -P]] [-fi | -n] [-apvX] source_file ... target",
+           "",
+           "     -R   Copy directories recursively.",
+           "     -p   Preserve modification time, access time, mode, user and group.",
+           "     -a   Same as -pPR.",
+           "     -v   Cause cp to be verbose."],
+    answer: "cp -a source dest",
+    wrong: ["cp -R source dest", "cp -pv source dest", "cp -Rv source dest"],
+    why: "The page says -a is the same as -pPR, so one flag gives recursion and "
+       + "preservation together.\n\n-R alone recurses without preserving metadata, "
+       + "which matters when the copy is evidence. -p alone preserves but does not "
+       + "recurse, so it fails on a directory." },
+  { goal: "Show only the lines of a file that do NOT contain the word error, with line "
+        + "numbers.",
+    page: ["SYNOPSIS",
+           "     grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwxZ] [-e pattern] [file ...]",
+           "",
+           "     -v   Selected lines are those NOT matching the pattern.",
+           "     -n   Each output line is preceded by its line number.",
+           "     -c   Only a count of selected lines is written.",
+           "     -i   Perform case insensitive matching."],
+    answer: "grep -vn error file",
+    wrong: ["grep -cn error file", "grep -in error file", "grep -n error file"],
+    why: "-v inverts the match and -n adds line numbers. Combining single-letter flags "
+       + "is standard.\n\n-c would print a count instead of the lines, which is a "
+       + "different question, and -i only changes case sensitivity." },
+  { goal: "List every file under the current directory modified in the last day.",
+    page: ["SYNOPSIS",
+           "     find [path...] [expression]",
+           "",
+           "     -mtime n   File's data was last modified n*24 hours ago.",
+           "     -mmin n    File's data was last modified n minutes ago.",
+           "     -newer f   File was modified more recently than file f.",
+           "",
+           "     Numeric arguments can be specified as +n for greater than n,",
+           "     -n for less than n, or n for exactly n."],
+    answer: "find . -mtime -1",
+    wrong: ["find . -mtime 1", "find . -mtime +1", "find . -mmin -1"],
+    why: "The page explains the numeric convention at the bottom: -n means less than "
+       + "n. So -mtime -1 is 'less than one day ago'.\n\n-mtime 1 means exactly one "
+       + "day ago and skips everything more recent, which is the trap. -mtime +1 is "
+       + "the opposite of what was asked." },
+  { goal: "From cmd: search every file under this folder for the text 'password', "
+        + "ignoring case.",
+    page: ["FINDSTR",
+           "     findstr [/S] [/I] [/N] [/R] [/C:string] strings [files]",
+           "",
+           "     /S   Searches for matching files in the current directory and all",
+           "          subdirectories.",
+           "     /I   Specifies that the search is not to be case-sensitive.",
+           "     /N   Prints the line number before each line that matches.",
+           "     /C:  Uses specified string as a literal search string."],
+    answer: "findstr /S /I password *",
+    wrong: ["findstr /S password *", "find /S /I password *",
+            "findstr /R /N password *"],
+    why: "/S recurses and /I ignores case; both are needed and the page states each.\n\n"
+       + "The older `find` command supports neither recursion nor regular expressions, "
+       + "which is why findstr exists and why reaching for the familiar name is a "
+       + "mistake here." },
+  { goal: "Show the last 20 lines of a log and keep following it as it grows.",
+    page: ["SYNOPSIS",
+           "     tail [-F | -f | -r] [-q] [-b number | -c number | -n number] [file]",
+           "",
+           "     -f   Do not stop when end of file is reached; wait for additional data.",
+           "     -F   Same as -f, but also detect if the file is renamed or rotated.",
+           "     -n   The location is number lines from the end of the input.",
+           "     -r   Display in reverse order."],
+    answer: "tail -n 20 -F file",
+    wrong: ["tail -n 20 -r file", "tail -c 20 -f file", "tail -20 -F file"],
+    why: "-n counts lines and -F follows across a rotation, which is what you want on "
+       + "a log that rolls.\n\n-c counts bytes rather than lines, and -r reverses "
+       + "instead of following. -f alone would stop following the moment the file was "
+       + "rotated out from under it." },
+];
+
+let synG = null;
+
+function startFindSwitch() {
+  gResetBag("syn");
+  synG = { round: 1, right: 0, misses: [], done: false, picked: null };
+  synNext(true);
+}
+
+function synNext(first) {
+  if (!synG) return;
+  if (!first) {
+    if (synG.round >= 6) { synG.done = true; render(); return; }
+    synG.round++;
+  }
+  const t = gDeal("syn", SYNTAX_TASKS);
+  synG.task = t;
+  const opts = shuffleArray([t.answer].concat(t.wrong));
+  synG.opts = opts;
+  synG.correct = opts.indexOf(t.answer);
+  synG.picked = null;
+  state.screen = "findswitch";
+  render();
+}
+
+function synPick(i) {
+  if (!synG || synG.picked !== null) return;
+  synG.picked = i;
+  const ok = i === synG.correct;
+  if (ok) { synG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(synG.misses, { cat: "os_research", ok: false,
+      q: synG.task.goal, a: synG.opts[i] });
+  }
+  arcadeCredit("findswitch", ok);
+  render();
+}
+
+function renderFindSwitch() {
+  const g = synG;
+  if (!g) { startFindSwitch(); return ""; }
+  const head = gHead("synG=null; goToArcade()", "Find the Switch",
+                     [g.round + "/6", "round"], [g.right, "right"]);
+  if (g.done) {
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">Find the Switch</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 6.</b> '
+      + (g.right >= 5 ? "You are reading the page rather than recalling the flag."
+        : "Everything needed is on screen. Read the description of each flag before "
+          + "choosing, and watch for the conventions stated at the bottom \u2014 a "
+          + "leading hyphen or plus on a number usually changes the meaning entirely.")
+      + '</div>' + renderDebrief(g.misses, { total: 6, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startFindSwitch()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="synG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  const letters = "ABCD";
+  const opts = g.opts.map(function (o, i) {
+    let cls = "ts-opt mono";
+    if (g.picked !== null) {
+      if (i === g.correct) cls += " right";
+      else if (i === g.picked) cls += " wrong";
+      else cls += " dim";
+    }
+    return '<div class="' + cls + '"'
+      + (g.picked === null ? ' onclick="synPick(' + i + ')"' : "")
+      + '><span class="ts-l">' + letters[i] + '</span>' + esc(o) + '</div>';
+  }).join("");
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">Find the Switch</div>'
+    + '<div class="bpf-goal">Using only this page: ' + esc(g.task.goal) + '</div>'
+    + '<pre class="q-out man-page">' + esc(g.task.page.join("\n")) + '</pre>'
+    + '<div class="ts-opts">' + opts + '</div>'
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        g.task.answer, g.task.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="synNext()">'
+         + (g.round >= 6 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ---- WHERE IS IT SET -----------------------------------------------
+const CONFIG_PLACES = [
+  ["/etc/hosts", "static names, checked before DNS"],
+  ["/etc/resolv.conf", "which resolvers to ask"],
+  ["the systemd unit file", "how a service starts, and as whom"],
+  ["the firewall rules", "what may reach the host"],
+  ["the service's own config", "what it binds to and how it behaves"],
+  ["/etc/fstab", "which volumes mount, where, and with what options"],
+  ["the registry Run key", "what starts at logon"],
+  ["crontab", "what runs on a schedule"],
+];
+
+const CONFIG_TASKS = [
+  { ask: "One host resolves intranet.corp to the wrong address. Every other host on the "
+       + "same network resolves it correctly, and the DNS server has the right record. "
+       + "Where do you look first?",
+    key: "/etc/hosts",
+    why: "One host differing while the server is right points at something local, and "
+       + "the hosts file is consulted before DNS.\n\nThat is what makes it worth "
+       + "checking first: it overrides a correct server and leaves nothing in the DNS "
+       + "logs, so no amount of looking at the server explains it." },
+  { ask: "A service is running and its unit reports active, but nothing can connect from "
+       + "another machine. The firewall permits the port. Where next?",
+    key: "the service's own config",
+    why: "Running means the process exists, not that it is listening where you expect. "
+       + "A bind address of 127.0.0.1 accepts local connections and refuses everything "
+       + "else.\n\n`ss -tlnp` shows which address it actually bound to, which "
+       + "separates a service problem from a network one in a single command." },
+  { ask: "A service works fine until the machine reboots, after which it is not running. "
+       + "Nothing in the logs suggests it crashed. What is wrong?",
+    key: "the systemd unit file",
+    why: "It was started but never enabled. Starting affects now; enabling affects "
+       + "boot, and neither implies the other.\n\n`systemctl enable --now` does both, "
+       + "which is why the flag exists." },
+  { ask: "A host cannot resolve any name at all, but can reach addresses directly by IP. "
+       + "Where do you look?",
+    key: "/etc/resolv.conf",
+    why: "Reaching addresses by IP proves routing and connectivity are fine, so the "
+       + "fault is in resolution.\n\nThat file names the resolvers to ask. An empty or "
+       + "wrong entry produces exactly this: everything works if you already know the "
+       + "address." },
+  { ask: "A volume the application expects is missing after every reboot, though it "
+       + "mounts fine by hand. Where is that set?",
+    key: "/etc/fstab",
+    why: "Mounting by hand proves the volume and file system are fine. What is missing "
+       + "is the instruction to mount it at boot.\n\nA malformed entry there can also "
+       + "stop a machine booting at all, which is why it is worth testing with "
+       + "`mount -a` before rebooting." },
+  { ask: "A program launches every time a particular user logs in, but not for anyone "
+       + "else, and no scheduled task exists. Where is it configured?",
+    key: "the registry Run key",
+    why: "Per-user rather than machine-wide means HKCU rather than HKLM, and at logon "
+       + "rather than at boot means a Run key rather than a service.\n\nIt is writable "
+       + "without administrator rights, which is why it is such a common persistence "
+       + "location." },
+  { ask: "A backup runs at 3am on a Linux host and then exits. It is not a service. "
+       + "Where is that defined?",
+    key: "crontab",
+    why: "Something that runs and exits on a schedule is a cron job or a systemd timer, "
+       + "not a service \u2014 a service is meant to stay running.\n\nThat distinction "
+       + "decides where to look, and looking through unit files for it wastes the time "
+       + "of anyone who missed it." },
+];
+
+let cfgG = null;
+
+function startWhereSet() {
+  gResetBag("cfg");
+  cfgG = { round: 1, right: 0, misses: [], done: false, picked: null };
+  cfgNext(true);
+}
+
+function cfgNext(first) {
+  if (!cfgG) return;
+  if (!first) {
+    if (cfgG.round >= 6) { cfgG.done = true; render(); return; }
+    cfgG.round++;
+  }
+  const t = gDeal("cfg", CONFIG_TASKS);
+  cfgG.task = t;
+  const right = CONFIG_PLACES.filter(function (p) { return p[0] === t.key; })[0];
+  const others = shuffleArray(CONFIG_PLACES.filter(function (p) { return p[0] !== t.key; }))
+    .slice(0, 3);
+  cfgG.opts = shuffleArray([right].concat(others));
+  cfgG.correct = cfgG.opts.indexOf(right);
+  cfgG.picked = null;
+  state.screen = "whereset";
+  render();
+}
+
+function cfgPick(i) {
+  if (!cfgG || cfgG.picked !== null) return;
+  cfgG.picked = i;
+  const ok = i === cfgG.correct;
+  if (ok) { cfgG.right++; playCorrectSound(); }
+  else {
+    playIncorrectSound();
+    missRecord(cfgG.misses, { cat: "os_local_config", ok: false,
+      q: cfgG.task.ask, a: cfgG.opts[i][0] });
+  }
+  arcadeCredit("whereset", ok);
+  render();
+}
+
+function svgPlaces(g) {
+  let o = '<svg viewBox="0 0 810 128" class="va-svg" role="img" width="810" height="128" '
+        + 'preserveAspectRatio="xMidYMid meet">';
+  o += '<text x="0" y="12" font-size="10" fill="currentColor" opacity=".55" '
+     + 'letter-spacing="1.1">FOUR PLACES \u2014 EACH BY WHAT IT CONTROLS</text>';
+  g.opts.forEach(function (p, i) {
+    const x = 5 + (i % 2) * 405, y = 20 + Math.floor(i / 2) * 50;
+    const answered = g.picked !== null;
+    let col = "currentColor", op = ".26", fill = "0";
+    if (answered) {
+      if (i === g.correct) { col = "var(--correct,#4bb98a)"; op = ".85"; fill = ".12"; }
+      else if (i === g.picked) { col = "var(--incorrect)"; op = ".85"; fill = ".10"; }
+      else op = ".14";
+    }
+    o += '<rect x="' + x + '" y="' + y + '" width="392" height="42" rx="7" fill="' + col
+       + '" fill-opacity="' + fill + '" stroke="' + col + '" stroke-opacity="' + op + '"'
+       + (answered ? "" : ' style="cursor:pointer" onclick="cfgPick(' + i + ')"') + '/>'
+       + '<text x="' + (x + 16) + '" y="' + (y + 19) + '" font-size="11.5" '
+       + 'fill="currentColor" font-family="ui-monospace,monospace" opacity="'
+       + (answered && i !== g.correct && i !== g.picked ? ".4" : "1") + '"'
+       + (answered ? "" : ' style="cursor:pointer" onclick="cfgPick(' + i + ')"')
+       + '>' + esc(p[0]) + '</text>'
+       + '<text x="' + (x + 16) + '" y="' + (y + 34) + '" font-size="10.5" '
+       + 'fill="currentColor" opacity=".5">' + esc(p[1]) + '</text>';
+  });
+  return o + "</svg>";
+}
+
+function renderWhereSet() {
+  const g = cfgG;
+  if (!g) { startWhereSet(); return ""; }
+  const head = gHead("cfgG=null; goToArcade()", "Where Is It Set",
+                     [g.round + "/6", "round"], [g.right, "right"]);
+  if (g.done) {
+    return '<div class="arcade-wrap">' + head + '<div class="bpf-mode">Where Is It Set</div>'
+      + '<div class="mx-over"><b>' + g.right + ' of 6.</b> '
+      + (g.right >= 5 ? "You are reading what the symptom rules out, which is the method."
+        : "Every symptom rules something out. One host differing means local; reaching "
+          + "by IP but not by name means resolution; working until reboot means it was "
+          + "never enabled.")
+      + '</div>' + renderDebrief(g.misses, { total: 6, score: g.right })
+      + '<div class="g-over-btns"><button class="g-btn" onclick="startWhereSet()">'
+      + 'Another run</button><button class="g-btn ghost" onclick="cfgG=null; goToArcade()">'
+      + 'Arcade</button></div></div>';
+  }
+  return '<div class="arcade-wrap">' + head
+    + '<div class="bpf-mode">Where Is It Set</div>'
+    + '<div class="bpf-goal">' + esc(g.task.ask) + '</div>'
+    + svgPlaces(g)
+    + (g.picked === null ? "" : gVerdict(g.picked === g.correct,
+        g.opts[g.correct][0], g.task.why))
+    + (g.picked === null ? ""
+       : '<div class="g-actions"><button class="g-btn" onclick="cfgNext()">'
+         + (g.round >= 6 ? "Finish" : "Next &rarr;") + '</button></div>')
+    + '</div>';
+}
+
+// ===================================================================
 // THE TOPIC FLOW
 //
 // A topic row used to offer Read, Practice and Quiz as three equal
@@ -24940,8 +26276,25 @@ const TOPIC_GAME = {
   fund_cpu:       "wireorder",
   fund_memory:    "wherelive",
   fund_kernel:    "crossboundary",
-  fund_storage:   null,
+  fund_storage:   "diskbench",
 
+  sec_vulnerabilities: "nameattack",
+  sec_builtin_security: "pickdefense",
+  sec_products:    "pickdefense",
+  sec_rootkits:    "triage",
+  netdes_ports_flags: "readflags",
+  netdes_handshake:   "readflags",
+  out_capture:     "readflags",
+  os_research:     "findswitch",
+  os_executables:  "findswitch",
+  out_script:      "findswitch",
+  os_local_config: "whereset",
+  netsvc_admin:    "whereset",
+  os_unix_services: "whereset",
+  out_services:    "whereset",
+  out_arp:         "nameattack",
+  sec_noise:       "nameattack",
+  os_integrity:    "pickdefense",
   os_shell_usage:  "pipeline",
   os_shells:       "pipeline",
   os_nav_unix:     "pipeline",
@@ -24968,6 +26321,7 @@ const TOPIC_GAME = {
   out_iptables:             "fw",
 
   prog_reading_code: "trace",
+  prog_interpreted: "whatruns",
   prog_shell_scripting: "trace",
 
   sec_fingerprints: "triage",
@@ -25008,7 +26362,7 @@ function flowDone(cat, step) {
 function flowNext(cat) {
   const steps = flowSteps(cat);
   for (let i = 0; i < steps.length; i++) {
-    if (!flowDone(cat, steps[i].key)) return steps[i].key;
+    if (steps[i].present && !flowDone(cat, steps[i].key)) return steps[i].key;
   }
   return null;
 }
@@ -25016,24 +26370,24 @@ function flowNext(cat) {
 // Which steps this topic actually has. A topic with no reading or no game
 // shows fewer steps rather than a dead button.
 function flowSteps(cat) {
-  const out = [];
+  // Always four slots, in the same order. A topic without a reading or a game
+  // gets a placeholder rather than a shorter row, so Read, Play, Practice and
+  // Check line up as columns down the whole module.
   const hasRead = typeof CATEGORY_TO_READINGS !== "undefined"
     && (CATEGORY_TO_READINGS[cat] || []).length > 0;
   const game = TOPIC_GAME[cat];
   const hasGame = game && typeof GAMES !== "undefined" && GAMES[game];
-  // Single quotes, not JSON.stringify: the attribute is itself delimited with
-  // double quotes, so a stringified argument closes it early and the handler is
-  // truncated mid-call. Category ids are [a-z0-9_] so single quotes are safe.
   const arg = "'" + String(cat).replace(/'/g, "\\'") + "'";
-  if (hasRead) out.push({ key: "read", label: "Read",
-    go: "openTopicReading(" + arg + ")" });
-  if (hasGame) out.push({ key: "play", label: "Play",
-    go: "flowPlay(" + arg + ")" });
-  out.push({ key: "practice", label: "Practice",
-    go: "flowPractice(" + arg + ")" });
-  out.push({ key: "check", label: "Check",
-    go: "flowCheck(" + arg + ")" });
-  return out;
+  return [
+    { key: "read", label: "Read", present: !!hasRead,
+      go: "openTopicReading(" + arg + ")" },
+    { key: "play", label: "Play", present: !!hasGame,
+      go: "flowPlay(" + arg + ")" },
+    { key: "practice", label: "Practice", present: true,
+      go: "flowPractice(" + arg + ")" },
+    { key: "check", label: "Check", present: true,
+      go: "flowCheck(" + arg + ")" }
+  ];
 }
 
 function flowPlay(cat) {
@@ -25062,6 +26416,8 @@ function flowButtons(cat) {
   const steps = flowSteps(cat);
   const next = flowNext(cat);
   return '<span class="tt-acts">' + steps.map(function (s) {
+    if (!s.present)
+      return '<span class="tt-act ghost" aria-hidden="true">' + s.label + '</span>';
     const done = flowDone(cat, s.key);
     const cls = "tt-act" + (done ? " done" : "") + (s.key === next ? " go" : "");
     return '<button class="' + cls + '" onclick="event.stopPropagation(); ' + s.go + '">'
@@ -25083,6 +26439,9 @@ const SCREEN_TO_GAME = {
   // Three games open a picker before the game itself, so the how-to has to be
   // reachable from that screen too -- it is where you are least oriented.
   gauntpick: "gauntlet", acrpick: "acronym", mlpick: "matchlab",
+  diskbench: "diskbench", whatruns: "whatruns",
+  nameattack: "nameattack", pickdefense: "pickdefense", readflags: "readflags",
+  findswitch: "findswitch", whereset: "whereset",
   // games added later; a missing entry here means the how-to link vanishes
   numbersbench: "numbersbench", pipeline: "pipeline", setbits: "setbits",
   registrygame: "registrygame", triage: "triage", pickkey: "pickkey"
@@ -25119,6 +26478,114 @@ function arcadeHowToLink() {
          + "survive, and see the consequence of each.",
     tags: ["generated", "no timer"],
     build: function () { return new Array(9); }, custom: "startWhereLive()" };
+  GAMES.nameattack = { name: "Name the Attack", kind: "sec",
+    blurb: "Four observations from one network. Any one has an innocent explanation; "
+         + "only the combination names the attack.",
+    tags: ["no timer"],
+    build: function () { return new Array(6); }, custom: "startNameAttack()" };
+  GAMES.pickdefense = { name: "Pick the Defense", kind: "sec",
+    blurb: "Match a mechanism to the step it actually prevents. Each is stated by what "
+         + "it does, not by what it stops.",
+    tags: ["no timer"],
+    build: function () { return new Array(6); }, custom: "startPickDefense()" };
+  GAMES.readflags = { name: "Read the Flags", kind: "netdes",
+    blurb: "Three probes, three replies. Open, closed and filtered together, because "
+         + "the last two differ only in what does not arrive.",
+    tags: ["generated", "no timer"],
+    build: function () { return new Array(8); }, custom: "startReadFlags()" };
+  GAMES.findswitch = { name: "Find the Switch", kind: "os",
+    blurb: "Build the command from the manual page on screen. Looking it up is the "
+         + "skill, so the page stays.",
+    tags: ["no timer"],
+    build: function () { return new Array(6); }, custom: "startFindSwitch()" };
+  GAMES.whereset = { name: "Where Is It Set", kind: "os",
+    blurb: "Given a symptom, decide where to look. Every symptom rules something out.",
+    tags: ["no timer"],
+    build: function () { return new Array(6); }, custom: "startWhereSet()" };
+  HOWTO.nameattack = { kind: "case", title: "Name the Attack",
+    sub: "Four observations. Work out what is happening.",
+    steps: [
+      "<b>Read all four before choosing.</b> Any single line usually has an innocent "
+      + "explanation — an extra hop could be a new router.",
+      "Ask what the set has in common. One IP with two MACs and unsolicited replies is "
+      + "ARP spoofing; two DHCP offers per discover is a rogue server.",
+      "The evidence is raw and nothing is named, which is the point."
+    ] };
+  HOWTO.pickdefense = { kind: "drill", title: "Pick the Defense",
+    sub: "Which mechanism stops the step described?",
+    steps: [
+      "Each mechanism is stated by <b>what it does</b>, not what it stops — "
+      + "otherwise the board hands over the match.",
+      "Read the attack step carefully. Several defenses will look plausible; only one "
+      + "blocks <i>that</i> step.",
+      "The commonest trap is DEP versus ASLR: one stops execution, the other hides the "
+      + "address. They solve different halves."
+    ] };
+  HOWTO.readflags = { kind: "lab", title: "Read the Flags",
+    sub: "Classify three probed ports from the capture.",
+    steps: [
+      "<b>SYN-ACK</b>, printed [S.], means something is listening — open.",
+      "<b>RST</b>, printed [R.], means nothing is listening but the host is up — "
+      + "closed.",
+      "<b>No reply at all</b> means something dropped it — filtered. It is only "
+      + "distinguishable from closed by what does not arrive, which is why all three "
+      + "appear together."
+    ] };
+  HOWTO.findswitch = { kind: "lab", title: "Find the Switch",
+    sub: "Build the command using only the page on screen.",
+    steps: [
+      "<b>Nothing is recalled.</b> Everything needed is displayed, including the "
+      + "conventions stated at the bottom of the page.",
+      "Read each flag's description before choosing. A leading hyphen or plus on a "
+      + "number usually changes the meaning entirely — -perm -4000 is not "
+      + "-perm 4000.",
+      "This is the one game where <b>looking it up is the skill being drilled</b>."
+    ] };
+  HOWTO.whereset = { kind: "drill", title: "Where Is It Set",
+    sub: "Given a symptom, decide where to look first.",
+    steps: [
+      "<b>Every symptom rules something out.</b> One host differing means local. "
+      + "Reaching by IP but not by name means resolution.",
+      "Working until reboot means started but never enabled. Running but unreachable "
+      + "usually means the bind address, not the firewall.",
+      "Each location is annotated with what it controls, never with which symptom it "
+      + "explains."
+    ] };
+  GAMES.diskbench = { name: "The Disk Bench", kind: "fund",
+    blurb: "All four parts of storage in one run: how space is allocated, how media "
+         + "differ, how a disk is divided, and what survives a crash.",
+    tags: ["generated", "no timer"],
+    build: function () { return new Array(10); }, custom: "startDiskBench()" };
+  GAMES.whatruns = { name: "What Will Run Here", kind: "prog",
+    blurb: "What an interpreter needs present, what actually executes, and what a "
+         + "script leaves behind for whoever looks afterward.",
+    tags: ["generated", "no timer"],
+    build: function () { return new Array(9); }, custom: "startWhatRuns()" };
+  HOWTO.diskbench = { kind: "lab", title: "The Disk Bench",
+    sub: "Ten rounds across the whole of storage.",
+    steps: [
+      "The first four rounds take <b>one part each</b> — allocation, media, "
+      + "partitioning, journaling — so no run can be all arithmetic.",
+      "<b>Allocation:</b> round every file up to a whole cluster on its own, then add. "
+      + "The remainder is slack.",
+      "<b>Media:</b> TRIM lets an SSD controller erase freed blocks on its own "
+      + "schedule, which is why the recovery window is not yours to control.",
+      "<b>Partitioning:</b> read the symptoms together. A 2 TiB cap and four "
+      + "partitions name MBR; either alone is ambiguous.",
+      "<b>Journaling:</b> consistency is a claim about the file system, not about your "
+      + "data."
+    ] };
+  HOWTO.whatruns = { kind: "case", title: "What Will Run Here",
+    sub: "Read the host, not the language.",
+    steps: [
+      "<b>An interpreter must be present</b> to run its language. A compiler is needed "
+      + "only to build, not to run what was built elsewhere.",
+      "<b>A file needs both</b> the execute bit and something telling the kernel which "
+      + "interpreter to use. Either alone is not enough.",
+      "<b>Code passed with -c leaves nothing on disk.</b> Python caches bytecode as "
+      + ".pyc only for imported modules — never for -c.",
+      "Three parts, one per opening round, so a run covers all of them."
+    ] };
   GAMES.registrygame = { name: "Where Would It Live", kind: "os",
     blurb: "File each artifact under the right registry key. Two questions settle "
          + "almost all of them: who does it affect, and when does it run.",
